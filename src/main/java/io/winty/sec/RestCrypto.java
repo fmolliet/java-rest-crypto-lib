@@ -1,5 +1,6 @@
 package io.winty.sec;
 
+import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import javax.crypto.Cipher;
@@ -11,6 +12,7 @@ import javax.crypto.spec.SecretKeySpec;
 public class RestCrypto {
     
     private static final String ALGORITHM = "AES";
+    private static final String AES_GCM = "AES/GCM/NoPadding";
     private static final int DEK_KEY_SIZE = 256;
     private static final String SPLIT_CHAR = ":"; 
     private static final int GCM_NONCE_LENGTH = 12; 
@@ -21,7 +23,7 @@ public class RestCrypto {
     private final SecretKey kek;
     
     
-    public RestCrypto(String base64EncodedKek) {
+    public RestCrypto(String base64EncodedKek) throws GeneralSecurityException {
         byte[] decodedKey = Base64.getDecoder().decode(base64EncodedKek);
         this.kek = new SecretKeySpec(decodedKey, 0, decodedKey.length, ALGORITHM);
         random = new SecureRandom();
@@ -33,99 +35,77 @@ public class RestCrypto {
         return keyGenerator.generateKey();
     }
 
-    public String encrypt(String data) throws Exception {
-        SecretKey dek = generateDEK();
-        Cipher dataCipher = Cipher.getInstance(ALGORITHM);
-        dataCipher.init(Cipher.ENCRYPT_MODE, dek);
-
-        byte[] encryptedData = dataCipher.doFinal(data.getBytes());
-
-        Cipher kekCipher = Cipher.getInstance(ALGORITHM);
-        kekCipher.init(Cipher.WRAP_MODE, kek);
-        byte[] encryptedDek = kekCipher.wrap(dek);
-
-        return Base64.getEncoder().encodeToString(encryptedDek) + SPLIT_CHAR + Base64.getEncoder().encodeToString(encryptedData);
-    }
-
-   
-    public String decrypt(String encryptedDataWithDek) throws Exception {
-        String[] parts = encryptedDataWithDek.split(SPLIT_CHAR);
-        byte[] encryptedDek = Base64.getDecoder().decode(parts[0]);
-        byte[] encryptedData = Base64.getDecoder().decode(parts[1]);
-
-        Cipher kekCipher = Cipher.getInstance(ALGORITHM);
-        kekCipher.init(Cipher.UNWRAP_MODE, kek);
-        SecretKey dek = (SecretKey) kekCipher.unwrap(encryptedDek, ALGORITHM, Cipher.SECRET_KEY);
-
-        Cipher dataCipher = Cipher.getInstance(ALGORITHM);
-        dataCipher.init(Cipher.DECRYPT_MODE, dek);
-
-        byte[] decryptedData = dataCipher.doFinal(encryptedData);
-        return new String(decryptedData);
-    }
-    
     public String storeSecureData(String data) throws Exception{
         SecretKey dek = generateDEK();
-        return wrap(dek)+ SPLIT_CHAR + encryptGCM(data, dek);
+        return wrap(dek)+ SPLIT_CHAR + encrypt(data.getBytes(), dek);
     }
     public String retrieveSecureData(String cipheredData) throws Exception {
         String[] parts = cipheredData.split(SPLIT_CHAR);
         byte[] wrappedDek = Base64.getDecoder().decode(parts[0]);
+        byte[] cipheredPayload = Base64.getDecoder().decode(parts[1]);
         
         SecretKey dek = unwrap(wrappedDek);
-        return decryptGCM(parts[1]+SPLIT_CHAR+parts[2], dek);
+        return decrypt(cipheredPayload, dek);
     }
     
-    private String encryptGCM(String plaintext, SecretKey dek) throws Exception {
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+    private String encrypt(byte[] plainTextBytes, SecretKey dek) throws Exception {
+        byte[] nonce = generateNonce();
+        Cipher cipher = Cipher.getInstance(AES_GCM);
+        cipher.init(Cipher.ENCRYPT_MODE, dek, getGCMParametersSpec(nonce));
 
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
-        random.nextBytes(nonce); // Nonce seguro e aleatório
-
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.ENCRYPT_MODE, dek, spec);
-
-        byte[] encryptedData = cipher.doFinal(plaintext.getBytes());
-        return Base64.getEncoder().encodeToString(nonce) + SPLIT_CHAR + Base64.getEncoder().encodeToString(encryptedData);
+        byte[] encryptedData = cipher.doFinal(plainTextBytes);
+        return Base64.getEncoder().encodeToString(concat(nonce,encryptedData));
     }
     
-    private String decryptGCM(String encryptedDataWithNonce, SecretKey dek) throws Exception {
-        String[] parts = encryptedDataWithNonce.split(SPLIT_CHAR);
-        byte[] nonce = Base64.getDecoder().decode(parts[0]);
-        byte[] encryptedData = Base64.getDecoder().decode(parts[1]);
-
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.DECRYPT_MODE, dek, spec);
+    private String decrypt(byte[] encryptedDataWithNonce, SecretKey dek) throws Exception {
+        byte[] nonce = getNonceFromBytes(encryptedDataWithNonce);
+        byte[] encryptedData = getPayloadFromBytes(encryptedDataWithNonce);
+        Cipher cipher = Cipher.getInstance(AES_GCM);
+        cipher.init(Cipher.DECRYPT_MODE, dek, getGCMParametersSpec(nonce));
 
         byte[] decryptedData = cipher.doFinal(encryptedData);
         return new String(decryptedData);
     }
     
     private String wrap(SecretKey keyToWrap) throws Exception {
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
-        (new SecureRandom()).nextBytes(nonce);
-
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.WRAP_MODE, kek, spec);
+        byte[] nonce = generateNonce();
+        Cipher cipher = Cipher.getInstance(AES_GCM);
+        cipher.init(Cipher.WRAP_MODE, kek, getGCMParametersSpec(nonce));
 
         byte[] wrappedKey = cipher.wrap(keyToWrap);
         return Base64.getEncoder().encodeToString(concat(nonce, wrappedKey));
     }
     
-    private SecretKey unwrap(byte[] wrappedKeyData) throws Exception {
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
-        System.arraycopy(wrappedKeyData, 0, nonce, 0, GCM_NONCE_LENGTH);
+    private SecretKey unwrap(byte[] wrappedKeyDataWithNonce) throws Exception {
+        byte[] nonce = getNonceFromBytes(wrappedKeyDataWithNonce);
 
-        byte[] wrappedKey = new byte[wrappedKeyData.length - GCM_NONCE_LENGTH];
-        System.arraycopy(wrappedKeyData, GCM_NONCE_LENGTH, wrappedKey, 0, wrappedKey.length);
-
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.UNWRAP_MODE, kek, spec);
+        byte[] wrappedKey = getPayloadFromBytes(wrappedKeyDataWithNonce);
+        Cipher cipher = Cipher.getInstance(AES_GCM);
+        cipher.init(Cipher.UNWRAP_MODE, kek, getGCMParametersSpec(nonce));
 
         return (SecretKey) cipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+    }
+    
+    private GCMParameterSpec getGCMParametersSpec( byte[] nonce ){
+        return new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+    }
+    
+    private byte[] getNonceFromBytes(byte[] cipherData){
+        byte[] nonce = new byte[GCM_NONCE_LENGTH];
+        System.arraycopy(cipherData, 0, nonce, 0, GCM_NONCE_LENGTH);
+        return nonce;
+    }
+    
+    private byte[] getPayloadFromBytes(byte[] cipherData){
+        byte[] payload = new byte[cipherData.length - GCM_NONCE_LENGTH];
+        System.arraycopy(cipherData, GCM_NONCE_LENGTH, payload, 0, payload.length);
+        return payload;
+    }
+    
+    private byte[] generateNonce(){
+        byte[] nonce = new byte[GCM_NONCE_LENGTH];
+        random.nextBytes(nonce);
+        return nonce;
     }
 
     private byte[] concat(byte[] a, byte[] b) {
