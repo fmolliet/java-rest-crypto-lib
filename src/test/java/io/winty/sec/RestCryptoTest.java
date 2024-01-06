@@ -32,6 +32,22 @@ public class RestCryptoTest {
             fail("Exceção lançada durante teste de criptografia/descriptografia: " + e.getMessage());
         }
     }
+    
+    @Test
+    void testEncryptionDecryptionGCM() {
+        String originalText = "Texto de teste secreto";
+        try {
+            // Criptografar o texto original
+            String encryptedText = rest.storeSecureData(originalText);
+            System.out.println(encryptedText);
+            // Descriptografar o texto criptografado
+            String decryptedText = rest.retrieveSecureData(encryptedText);
+            // Verificar se o texto descriptografado é igual ao texto original
+            assertEquals(originalText, decryptedText);
+        } catch (Exception e) {
+            fail("Exceção lançada durante teste de criptografia/descriptografia: " + e.getMessage());
+        }
+    }
 
     @Test
     void testDecryptWithInvalidData() {
