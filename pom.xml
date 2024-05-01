@@ -5,9 +5,9 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.winty.sec</groupId>
-    <artifactId>rest-crypto</artifactId>
-    <version>1.0-SNAPSHOT</version>
-
+    <artifactId>rest-crypto-lib</artifactId>
+    <version>1.0.0</version>
+         
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
@@ -28,5 +28,14 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+   <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/fmolliet/java-rest-crypto-lib</url>
+    </repository>
+  </distributionManagement>
+         
 
 </project>
